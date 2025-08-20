@@ -1,7 +1,0 @@
-messages:
-  pluginEnabled: "sftpBackup enabled!"
-  pluginDisabled: "sftpBackup disabled!"
-  noPermission: "You don't have permission to use this command!"
-  backupStart: "Starting server backup..."
-  backupComplete: "Backup completed!"
-  backupFailed: "Backup failed! Check console."
