@@ -1,0 +1,15 @@
+name: sftpBackup
+version: 1.0.1
+main: com.chridev.sftpBackup.SftpBackup
+api-version: 1.21
+commands:
+  serverbackup:
+    description: Esegue un backup del server su SFTP
+    usage: /<command>
+permissions:
+  chridev.serverbackup:
+    description: Permesso di eseguire il backup
+    default: op
+  chridev.serverbackup.reload:
+    description: Permesso di ricaricare config e messages
+    default: op
