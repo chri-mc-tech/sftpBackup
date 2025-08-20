@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.chridev'
-version = '1.1-DEV'
+version = '1.1'
 
 repositories {
     mavenCentral()
