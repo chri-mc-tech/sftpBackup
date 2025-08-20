@@ -1,0 +1,7 @@
+pluginEnabled: "Plugin abilitato!"
+pluginDisabled: "Plugin disabilitato!"
+backupStart: "Backup del server iniziato..."
+backupComplete: "Backup completato con successo!"
+backupFailed: "Backup fallito!"
+noPermission: "Non hai il permesso per eseguire questo comando!"
+pluginReloaded: "Plugin ricaricato correttamente!"
