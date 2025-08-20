@@ -72,10 +72,18 @@ public class SftpBackup extends JavaPlugin {
         Properties config = new Properties();
         config.put("StrictHostKeyChecking", "no");
         session.setConfig(config);
-        session.connect();
+        session.connect(15000); // timeout 15 sec
 
         ChannelSftp channel = (ChannelSftp) session.openChannel("sftp");
-        channel.connect();
+        channel.connect(10000); // timeout 10 sec
+
+        // Se la cartella remota non esiste, la crea
+        try {
+            channel.cd(remoteDir);
+        } catch (Exception e) {
+            createRemoteDir(channel, remoteDir);
+            channel.cd(remoteDir);
+        }
 
         uploadFolderRecursive(channel, folder, remoteDir);
 
@@ -83,21 +91,34 @@ public class SftpBackup extends JavaPlugin {
         session.disconnect();
     }
 
+    private void createRemoteDir(ChannelSftp channel, String remoteDir) throws Exception {
+        String[] folders = remoteDir.split("/");
+        String path = "";
+        for (String folder : folders) {
+            if (folder.isEmpty()) continue;
+            path += "/" + folder;
+            try {
+                channel.cd(path);
+            } catch (Exception e) {
+                channel.mkdir(path);
+            }
+        }
+    }
+
     private void uploadFolderRecursive(ChannelSftp channel, File folder, String remotePath) throws Exception {
         if (!folder.isDirectory()) return;
 
         File[] files = folder.listFiles();
-        if (files == null) return; // safe null check
-
-        channel.cd(remotePath);
+        if (files == null) return;
 
         for (File file : files) {
             if (file.isDirectory()) {
-                try { channel.mkdir(file.getName()); } catch (Exception ignored) {}
-                uploadFolderRecursive(channel, file, remotePath + "/" + file.getName());
+                String newRemotePath = remotePath.endsWith("/") ? remotePath + file.getName() : remotePath + "/" + file.getName();
+                try { channel.mkdir(newRemotePath); } catch (Exception ignored) {}
+                uploadFolderRecursive(channel, file, newRemotePath);
             } else {
                 try (FileInputStream fis = new FileInputStream(file)) {
-                    channel.put(fis, file.getName());
+                    channel.put(fis, remotePath + "/" + file.getName());
                 }
             }
         }
