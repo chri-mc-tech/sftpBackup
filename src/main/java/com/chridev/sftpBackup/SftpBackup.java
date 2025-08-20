@@ -10,8 +10,14 @@ import com.jcraft.jsch.Session;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Properties;
 import java.util.logging.Level;
+
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -36,30 +42,108 @@ public class SftpBackup extends JavaPlugin {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (command.getName().equalsIgnoreCase("serverbackup")) {
-            if (!sender.hasPermission("chridev.serverbackup")) {
+        if (!command.getName().equalsIgnoreCase("serverbackup")) return false;
+
+        if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
+            if (!sender.hasPermission("chridev.serverbackup.reload")) {
                 sender.sendMessage(getMessage("noPermission"));
                 return true;
             }
-
-            getLogger().info(getMessage("backupStart"));
-            new Thread(() -> {
-                try {
-                    File folderToUpload = new File("."); // server folder
-                    sendFolderSFTP(folderToUpload);
-                    getLogger().info(getMessage("backupComplete"));
-                    sender.sendMessage(getMessage("backupComplete"));
-                } catch (Exception e) {
-                    getLogger().log(Level.SEVERE, getMessage("backupFailed"), e);
-                    sender.sendMessage(getMessage("backupFailed"));
-                }
-            }).start();
+            reloadConfig();
+            loadMessages();
+            sender.sendMessage(getMessage("pluginReloaded"));
+            getLogger().info(getMessage("pluginReloaded"));
             return true;
         }
-        return false;
+
+        if (!sender.hasPermission("chridev.serverbackup")) {
+            sender.sendMessage(getMessage("noPermission"));
+            return true;
+        }
+
+        getLogger().info(getMessage("backupStart"));
+        new Thread(() -> {
+            File backupFile = null;
+            try {
+                File serverFolder = new File(".");
+                File backupFolder = new File(getDataFolder(), "backup");
+                if (!backupFolder.exists() && !backupFolder.mkdirs()) {
+                    getLogger().warning("Impossible to create backup folder.");
+                }
+
+                backupFile = new File(backupFolder, "server_backup.tar");
+                tarFolder(serverFolder, backupFile);
+
+                getLogger().info("TAR file created, starting SFTP upload...");
+
+                Thread.sleep(2000); // Delay prima del trasferimento
+
+                sendFileSFTP(backupFile);
+
+                getLogger().info(getMessage("backupComplete"));
+                sender.sendMessage(getMessage("backupComplete"));
+            } catch (IOException | InterruptedException e) {
+                getLogger().log(Level.SEVERE, getMessage("backupFailed"), e);
+                sender.sendMessage(getMessage("backupFailed"));
+            } finally {
+                try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+
+                if (backupFile != null && backupFile.exists()) {
+                    if (!backupFile.delete()) {
+                        getLogger().warning("Cannot delete temporary server_backup.tar.");
+                    } else {
+                        getLogger().info("Temporary TAR deleted successfully.");
+                    }
+                }
+            }
+        }).start();
+        return true;
     }
 
-    private void sendFolderSFTP(File folder) throws Exception {
+    private void tarFolder(File sourceFolder, File tarFile) throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(tarFile);
+             TarArchiveOutputStream tos = new TarArchiveOutputStream(fos)) {
+            tos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX); // supporto nomi lunghi
+            tarFolderRecursive(sourceFolder, sourceFolder.getName(), tos);
+        }
+    }
+
+    private void tarFolderRecursive(File folder, String parentName, TarArchiveOutputStream tos) throws IOException {
+        File[] files = folder.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            // Salta il backup già esistente e link simbolici
+            if (file.getName().equalsIgnoreCase("server_backup.tar") || Files.isSymbolicLink(file.toPath())) continue;
+
+            String entryName = parentName + "/" + file.getName();
+            TarArchiveEntry entry = new TarArchiveEntry(file, entryName);
+
+            try {
+                tos.putArchiveEntry(entry);
+
+                if (file.isFile()) {
+                    try (FileInputStream fis = new FileInputStream(file)) {
+                        byte[] buffer = new byte[8192]; // buffer più grande
+                        int len;
+                        while ((len = fis.read(buffer)) != -1) {
+                            tos.write(buffer, 0, len);
+                        }
+                    } catch (IOException e) {
+                        getLogger().warning("Skipped file in TAR due to error: " + file.getAbsolutePath());
+                    }
+                } else if (file.isDirectory()) {
+                    tarFolderRecursive(file, entryName, tos);
+                }
+
+                tos.closeArchiveEntry();
+            } catch (Exception e) {
+                getLogger().warning("Failed to add " + file.getAbsolutePath() + " to TAR: " + e.getMessage());
+            }
+        }
+    }
+
+    private void sendFileSFTP(File file) throws IOException {
         String host = getConfig().getString("host", "localhost");
         int port = getConfig().getInt("port", 22);
         String user = getConfig().getString("user", "user");
@@ -67,73 +151,50 @@ public class SftpBackup extends JavaPlugin {
         String remoteDir = getConfig().getString("remoteDir", "/");
 
         JSch jsch = new JSch();
-        Session session = jsch.getSession(user, host, port);
-        session.setPassword(pass);
-        Properties config = new Properties();
-        config.put("StrictHostKeyChecking", "no");
-        session.setConfig(config);
-        session.connect(15000); // timeout 15 sec
+        Session session = null;
+        ChannelSftp channel = null;
 
-        ChannelSftp channel = (ChannelSftp) session.openChannel("sftp");
-        channel.connect(10000); // timeout 10 sec
-
-        // Se la cartella remota non esiste, la crea
         try {
-            channel.cd(remoteDir);
-        } catch (Exception e) {
-            createRemoteDir(channel, remoteDir);
-            channel.cd(remoteDir);
-        }
+            session = jsch.getSession(user, host, port);
+            session.setPassword(pass);
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            session.setConfig(config);
+            session.connect();
 
-        uploadFolderRecursive(channel, folder, remoteDir);
+            channel = (ChannelSftp) session.openChannel("sftp");
+            channel.connect();
 
-        channel.disconnect();
-        session.disconnect();
-    }
-
-    private void createRemoteDir(ChannelSftp channel, String remoteDir) throws Exception {
-        String[] folders = remoteDir.split("/");
-        String path = "";
-        for (String folder : folders) {
-            if (folder.isEmpty()) continue;
-            path += "/" + folder;
             try {
-                channel.cd(path);
+                channel.cd(remoteDir);
             } catch (Exception e) {
-                channel.mkdir(path);
+                channel.mkdir(remoteDir);
+                channel.cd(remoteDir);
             }
+
+            try (FileInputStream fis = new FileInputStream(file)) {
+                channel.put(fis, file.getName());
+            }
+
+            getLogger().info("SFTP upload finished successfully.");
+
+        } catch (Exception e) {
+            throw new IOException("Error during SFTP upload", e);
+        } finally {
+            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+            if (channel != null && channel.isConnected()) channel.disconnect();
+            if (session != null && session.isConnected()) session.disconnect();
         }
     }
 
-    private void uploadFolderRecursive(ChannelSftp channel, File folder, String remotePath) throws Exception {
-        if (!folder.isDirectory()) return;
-
-        File[] files = folder.listFiles();
-        if (files == null) return;
-
-        for (File file : files) {
-            if (file.isDirectory()) {
-                String newRemotePath = remotePath.endsWith("/") ? remotePath + file.getName() : remotePath + "/" + file.getName();
-                try { channel.mkdir(newRemotePath); } catch (Exception ignored) {}
-                uploadFolderRecursive(channel, file, newRemotePath);
-            } else {
-                try (FileInputStream fis = new FileInputStream(file)) {
-                    channel.put(fis, remotePath + "/" + file.getName());
-                }
-            }
-        }
-    }
-
-    // --- messages.yml helpers ---
     private void saveDefaultMessages() {
-        if (!getDataFolder().exists()) {
-            boolean created = getDataFolder().mkdirs();
-            if (!created) {
-                getLogger().warning("Could not create plugin data folder!");
-            }
+        if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
+            getLogger().warning("Cannot create plugin data folder.");
         }
         messagesFile = new File(getDataFolder(), "messages.yml");
-        if (!messagesFile.exists()) saveResource("messages.yml", false);
+        if (!messagesFile.exists()) {
+            saveResource("messages.yml", false);
+        }
     }
 
     private void loadMessages() {

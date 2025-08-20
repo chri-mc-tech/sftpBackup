@@ -10,3 +10,6 @@ permissions:
   chridev.serverbackup:
     description: Permesso di eseguire il backup
     default: op
+  chridev.serverbackup.reload:
+    description: Permesso di ricaricare config e messages
+    default: op

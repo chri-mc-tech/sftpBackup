@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.chridev'
-version = '1.0'
+version = '1.1-DEV'
 
 repositories {
     mavenCentral()
@@ -17,6 +17,8 @@ repositories {
 dependencies {
     compileOnly("org.spigotmc:spigot-api:1.21.1-R0.1-SNAPSHOT")
     implementation "com.jcraft:jsch:0.1.55"
+    implementation 'org.apache.commons:commons-compress:1.23.0'
+
 }
 
 java {
