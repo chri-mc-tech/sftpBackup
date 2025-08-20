@@ -1,5 +1,5 @@
 name: sftpBackup
-version: 1.0
+version: 1.1
 main: com.chridev.sftpBackup.SftpBackup
 api-version: 1.21
 commands:
